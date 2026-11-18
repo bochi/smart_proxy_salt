@@ -74,7 +74,8 @@ module Proxy
       def test_kill_aborts_job
         start_job(['salt_host'])
         kill_stub = stub_request(:post, "#{@salt_rest_api}/run")
-                    .with(:body => hash_including('fun' => 'jobs.kill_job'))
+                    .with(:body => hash_including('client' => 'local_async', 'fun' => 'saltutil.kill_job',
+                                                  'tgt' => 'salt_host', 'tgt_type' => 'list', 'arg' => '1'))
                     .to_return(:status => 200, :body => '{"return": [{}]}')
         @runner.kill
         assert_equal 1, exit_status

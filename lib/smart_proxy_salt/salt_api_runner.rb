@@ -14,6 +14,7 @@ module Proxy
       def initialize(options, suspended_action)
         super(options, :suspended_action => suspended_action)
         @options = options
+        @minions = []
         @pending_minions = nil
         @killed = false
       end
@@ -27,7 +28,8 @@ module Proxy
 
         ret = response.dig('return', 0) || {}
         @jid = ret['jid']
-        @pending_minions = Array(ret['minions']).dup
+        @minions = Array(ret['minions']).dup
+        @pending_minions = @minions.dup
 
         # get jid so dynflow can work with the data
         publish_data("jid: #{@jid}\n", 'stdout')
@@ -64,11 +66,12 @@ module Proxy
       def kill
         @killed = true
         publish_data("== TASK ABORTED BY USER ==\n", 'stdout')
-        if @jid
+        if @jid && !@minions.empty?
           begin
-            Proxy::Salt::ApiRequest.new.post('/run', :client => 'runner', :fun => 'jobs.kill_job', :arg => [@jid])
+            Proxy::Salt::ApiRequest.new.post('/run', :client => 'local_async', :tgt => @minions.join(','), :tgt_type => 'list',
+                                                     :fun => 'saltutil.kill_job', :arg => [@jid])
           rescue StandardError => e
-            logger.warn("kill_job(#{@jid}) failed: #{e}")
+            logger.warn("saltutil.kill_job(#{@jid}) failed: #{e}")
           end
         end
         publish_exit_status(1)
