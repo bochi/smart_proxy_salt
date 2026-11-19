@@ -5,6 +5,7 @@ Used by smart_proxy_salt to add/remove autosign keys or hostnames.
 Deploy and run: salt-run saltutil.sync_wheel
 """
 
+import fcntl
 import logging
 import os
 from contextlib import contextmanager
@@ -26,27 +27,43 @@ def _autosign_key_file():
 
 
 @contextmanager
-def _open_for_update(path):
-    mode = "r+" if os.path.exists(path) else "w+"
+def _locked(path):
+    """
+    Open path for reading and rewriting under an exclusive lock, so that
+    concurrent wheel calls do not lose each other's changes. The file is
+    rewritten in place to keep its inode (bind mounts, ownership).
+    """
     parent = os.path.dirname(path)
     if parent and not os.path.isdir(parent):
-        os.makedirs(parent, mode=0o755)
-    fh = open(path, mode)
-    try:
-        yield fh
-    finally:
-        fh.close()
+        os.makedirs(parent, mode=0o755, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    with os.fdopen(fd, "r+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield fh
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _rewrite(fh, lines):
+    fh.seek(0)
+    fh.writelines(lines)
+    fh.truncate()
+    fh.flush()
+    os.fsync(fh.fileno())
 
 
 def _append_value(path, value):
     try:
-        with _open_for_update(path) as fh:
+        with _locked(path) as fh:
             content = fh.read()
             if value in content.splitlines():
                 return True
             if content and not content.endswith("\n"):
                 fh.write("\n")
             fh.write(value + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         log.info("autosign: added '%s' to %s", value, path)
         return True
     except (OSError, IOError) as exc:
@@ -58,10 +75,11 @@ def _remove_value(path, value):
     if not os.path.exists(path):
         return True
     try:
-        with open(path, "r") as fh:
-            lines = [line for line in fh if line.rstrip("\n") != value]
-        with open(path, "w") as fh:
-            fh.writelines(lines)
+        with _locked(path) as fh:
+            lines = fh.readlines()
+            kept = [line for line in lines if line.rstrip("\n") != value]
+            if len(kept) != len(lines):
+                _rewrite(fh, kept)
         log.info("autosign: removed '%s' from %s", value, path)
         return True
     except (OSError, IOError) as exc:
