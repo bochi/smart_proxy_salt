@@ -139,6 +139,20 @@ def foreman_post_job_report(report):
         return False
 
 
+def _plainify(data, prefix=None):
+    """Flatten nested grains."""
+    flat = {}
+    for key, value in data.items():
+        name = str(key) if prefix is None else '{}::{}'.format(prefix, key)
+        if isinstance(value, (list, tuple)):
+            value = {str(i): v for i, v in enumerate(value)}
+        if isinstance(value, dict):
+            flat.update(_plainify(value, name))
+        else:
+            flat[name] = value
+    return flat
+
+
 def foreman_post_facts(minion, grains):
     """POST grains to /api/hosts/facts."""
     if not grains:
@@ -148,7 +162,8 @@ def foreman_post_facts(minion, grains):
     cfg = _cfg()
     facts = {
         'name': minion,
-        'facts': dict(grains,
+        'facts': dict(_plainify(grains),
+                      _timestamp=time.strftime('%Y-%m-%d %H:%M:%S %z'),
                       _type='foreman_salt',
                       operatingsystem=grains.get('os'),
                       operatingsystemrelease=grains.get('osrelease')),
