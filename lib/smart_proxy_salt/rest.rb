@@ -38,7 +38,7 @@ module Proxy
           job = result.dig('return', 0)
           raise ApiError.new("Unexpected response from Salt API for highstate(#{host}): #{result.inspect}") unless job.is_a?(Hash)
 
-          job
+          JSON.dump(job)
         end
 
         def key_delete(host)
