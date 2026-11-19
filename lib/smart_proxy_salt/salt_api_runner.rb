@@ -8,6 +8,8 @@ module Proxy
     # Submit jobs via Salt API
     class SaltApiRunner < Proxy::Dynflow::Runner::Base
       DEFAULT_REFRESH_INTERVAL = 2
+      FIND_JOB_INTERVAL = 30
+      MAX_MISSED_FIND_JOB = 2
 
       attr_reader :jid
 
@@ -16,6 +18,9 @@ module Proxy
         @options = options
         @minions = []
         @pending_minions = nil
+        @missed_find_job = Hash.new(0)
+        @last_find_job = nil
+        @lost_minion = false
         @killed = false
       end
 
@@ -30,6 +35,7 @@ module Proxy
         @jid = ret['jid']
         @minions = Array(ret['minions']).dup
         @pending_minions = @minions.dup
+        @last_find_job = Time.now
 
         # get jid so dynflow can work with the data
         publish_data("jid: #{@jid}\n", 'stdout')
@@ -57,9 +63,11 @@ module Proxy
           @pending_minions.delete(minion)
         end
 
+        check_pending_minions
         return unless @pending_minions.empty?
 
-        publish_exit_status(any_failure?(results) ? 1 : 0)
+        failed = @lost_minion || any_failure?(results)
+        publish_exit_status(failed ? 1 : 0)
       rescue StandardError => e
         publish_exception('Failed to refresh Salt job via API', e)
       end
@@ -79,6 +87,31 @@ module Proxy
       end
 
       private
+
+      # Fail minions that are no longer running the job (e.g. offline).
+      def check_pending_minions
+        return if @pending_minions.empty? || Time.now - @last_find_job < FIND_JOB_INTERVAL
+
+        @last_find_job = Time.now
+        response = Proxy::Salt::ApiRequest.new.post('/run', :client => 'local', :tgt => @pending_minions.join(','), :tgt_type => 'list',
+                                                            :fun => 'saltutil.find_job', :arg => [@jid])
+        running = response.dig('return', 0)
+        running = {} unless running.is_a?(Hash)
+
+        @pending_minions.dup.each do |minion|
+          if running[minion].is_a?(Hash) && !running[minion].empty?
+            @missed_find_job.delete(minion)
+            next
+          end
+
+          @missed_find_job[minion] += 1
+          next if @missed_find_job[minion] < MAX_MISSED_FIND_JOB
+
+          publish_data("#{minion}:\nMinion did not return\n", 'stdout')
+          @lost_minion = true
+          @pending_minions.delete(minion)
+        end
+      end
 
       def format_minion_result(minion, payload)
         body = if payload.is_a?(Hash)

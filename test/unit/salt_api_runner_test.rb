@@ -79,6 +79,21 @@ module Proxy
         assert_equal 0, exit_status
       end
 
+      def test_refresh_fails_minion_that_did_not_return
+        start_job(%w[salt_host other_host])
+        stub_lookup('return' => [{ 'other_host' => { 'state1' => { 'result' => true } } }])
+        find_job = stub_request(:post, "#{@salt_rest_api}/run")
+                   .with(:body => hash_including('client' => 'local', 'fun' => 'saltutil.find_job', 'tgt' => 'salt_host'))
+                   .to_return(:status => 200, :body => '{"return": [{}]}')
+        2.times do
+          assert_nil exit_status
+          @runner.instance_variable_set(:@last_find_job, Time.now - SaltApiRunner::FIND_JOB_INTERVAL)
+          @runner.refresh
+        end
+        assert_requested find_job, :times => 2
+        assert_equal 1, exit_status
+      end
+
       def test_kill_aborts_job
         start_job(['salt_host'])
         kill_stub = stub_request(:post, "#{@salt_rest_api}/run")
