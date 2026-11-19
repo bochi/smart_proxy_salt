@@ -48,6 +48,7 @@ module Proxy
 
         response = Proxy::Salt::ApiRequest.new.post('/run', :client => 'runner', :fun => 'jobs.lookup_jid', :arg => [@jid])
         results = response.dig('return', 0) || {}
+        results = results['data'] if results.is_a?(Hash) && results['outputter'].is_a?(String) && results['data'].is_a?(Hash)
 
         results.each do |minion, payload|
           next unless @pending_minions.include?(minion)

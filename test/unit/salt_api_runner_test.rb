@@ -71,6 +71,14 @@ module Proxy
         assert_equal 0, exit_status
       end
 
+      def test_refresh_unwraps_outputter_envelope
+        start_job(['salt_host'])
+        stub_lookup('return' => [{ 'outputter' => 'highstate',
+                                   'data' => { 'salt_host' => { 'state1' => { 'result' => true } } } }])
+        @runner.refresh
+        assert_equal 0, exit_status
+      end
+
       def test_kill_aborts_job
         start_job(['salt_host'])
         kill_stub = stub_request(:post, "#{@salt_rest_api}/run")
