@@ -46,10 +46,11 @@ def remove_authenticated_key(minion=None):
         log.warning("foreman: no autosign_key grain cached for %s; skipping cleanup", minion)
         return False
 
-    result = __salt__['saltutil.wheel'](
-        'autosign.remove_key', key=autosign_key,
+    import salt.wheel  # pylint: disable=import-outside-toplevel,import-error
+    result = salt.wheel.WheelClient(__opts__).cmd(
+        'autosign.remove_key', kwarg={'key': autosign_key}, print_event=False,
     )
-    success = bool(((result or {}).get('return') or {}).get('success'))
+    success = isinstance(result, dict) and bool(result.get('success'))
     log.info("foreman: autosign-key cleanup for %s (key=%s): %s",
              minion, str(autosign_key)[:8], "ok" if success else "failed")
     return success
